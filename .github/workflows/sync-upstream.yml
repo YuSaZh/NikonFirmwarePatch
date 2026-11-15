@@ -10,9 +10,10 @@ on:
     paths:
       - '.github/workflows/sync-upstream.yml'
 
-# No PAT or extra repository secret is required.
+# Keep the default token read-only. UPSTREAM_SYNC_TOKEN must be a fine-grained
+# PAT scoped only to this repository, with Contents and Workflows: read/write.
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: sync-upstream-main
@@ -27,12 +28,17 @@ jobs:
     steps:
       - name: Merge upstream into main
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
           UPSTREAM_REPOSITORY: XinmiaoZhao/NikonFirmwarePatch
           TARGET_BRANCH: main
         shell: bash
         run: |
           set -euo pipefail
+
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo '::error::Missing UPSTREAM_SYNC_TOKEN. Add a repository-scoped fine-grained PAT with Contents and Workflows write permissions in Actions secrets. No sync was attempted.'
+            exit 1
+          fi
 
           # Use GitHub's fork relationship, and fail closed if it ever changes.
           upstream=$(gh api "repos/${GITHUB_REPOSITORY}" --jq '.parent.full_name')
@@ -50,7 +56,7 @@ jobs:
             -f branch="$TARGET_BRANCH" \
             --jq '"\(.merge_type): \(.message)"' \
             > "$RUNNER_TEMP/upstream-sync-result.txt"; then
-            echo '::error::Upstream sync failed. Inspect the API error above. Resolve conflicts manually; upstream workflow edits may require a manual sync because GITHUB_TOKEN cannot grant workflows permission. No force update was attempted.'
+            echo '::error::Upstream sync failed. Inspect the API error above. Check token expiry and Contents/Workflows permissions, or resolve merge conflicts manually. No force update was attempted.'
             exit 1
           fi
 
@@ -64,6 +70,8 @@ jobs:
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
 # This syncs branch history only, not tags, releases, or release assets.
-# Upstream workflow edits may be rejected by GITHUB_TOKEN; sync those manually.
+# The token must be renewed before expiry. Never put its value in this file.
+# Upstream workflow code becomes trusted code after synchronization. Review the
+# upstream's trustworthiness; this workflow itself never checks out or runs it.
 # GitHub can disable public-repository schedules after 60 days of inactivity.
 # Re-enable this workflow in Actions if that happens; manual runs are available.
